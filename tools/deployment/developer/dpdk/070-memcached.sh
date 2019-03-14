@@ -1,0 +1,1 @@
+../ceph/070-memcached.sh

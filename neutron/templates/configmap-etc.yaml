@@ -169,6 +169,12 @@ just set it along with nova_metadata_host.
 {{- $formatter_fluent := dict "class" "oslo_log.formatters.FluentFormatter" -}}
 {{- $_ := set .Values.conf.logging "formatter_fluent" $formatter_fluent -}}
 {{- end -}}
+
+{{- if .Values.conf.ovs_dpdk.enabled -}}
+{{- $_ := set $envAll.Values.conf.plugins.openvswitch_agent.ovs "datapath_type" "netdev" -}}
+{{- $_ := set $envAll.Values.conf.plugins.openvswitch_agent.ovs "vhostuser_socket_dir" "/run/openvswitch/vhostuser" -}}
+{{- end -}}
+
 ---
 apiVersion: v1
 kind: Secret

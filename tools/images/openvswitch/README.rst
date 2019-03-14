@@ -31,9 +31,10 @@ repo run:
 .. code:: bash
 
     OVS_VERSION=2.8.1
+    IMAGE_TAG=latest-debian
     sudo docker build \
       --network=host \
       --build-arg OVS_VERSION="${OVS_VERSION}" \
-      -t docker.io/openstackhelm/openvswitch:v${OVS_VERSION} \
+      -t docker.io/openstackhelm/openvswitch:${IMAGE_TAG} \
       tools/images/openvswitch
-    sudo docker push docker.io/openstackhelm/openvswitch:v${OVS_VERSION}
+    sudo docker push docker.io/openstackhelm/openvswitch:${IMAGE_TAG}

@@ -19,7 +19,7 @@ DOCKER_REGISTRY            ?= docker.io
 IMAGE_NAME                 ?= openvswitch
 IMAGE_PREFIX               ?= openstackhelm
 OVS_VERSION                ?= 2.8.1
-IMAGE_TAG                  ?= v$(OVS_VERSION)
+IMAGE_TAG                  ?= latest-debian
 LABEL                      ?= putlabelshere
 
 IMAGE := ${DOCKER_REGISTRY}/${IMAGE_PREFIX}/${IMAGE_NAME}:${IMAGE_TAG}

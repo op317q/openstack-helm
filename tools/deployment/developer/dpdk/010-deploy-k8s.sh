@@ -1,0 +1,1 @@
+../ceph/010-deploy-k8s.sh
