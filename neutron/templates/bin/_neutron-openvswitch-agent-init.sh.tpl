@@ -20,6 +20,132 @@ set -ex
 
 chown neutron: /run/openvswitch/db.sock
 
+OVS_SOCKET=/run/openvswitch/db.sock
+
+function bind_nic {
+  echo $2 > /sys/bus/pci/devices/$1/driver_override
+  echo $1 > /sys/bus/pci/drivers/$2/bind
+}
+
+function unbind_nic {
+  echo $1 > /sys/bus/pci/drivers/$2/unbind
+  echo > /sys/bus/pci/devices/$1/driver_override
+}
+
+function get_name_by_pci_id {
+  path=$(find /sys/bus/pci/devices/$1/ -name net)
+  if [ -n "${path}" ] ; then
+    echo $(ls -1 $path/)
+  fi
+}
+
+function get_ip_address_from_interface {
+  local interface=$1
+  local ip=$(ip a s ${interface} | grep 'inet ' | awk '{print $2}' | awk -F "/" '{print $1}')
+  if [ -z "${ip}" ] ; then
+    echo "Interface ${interface} has no valid IP address."
+    exit 1
+  fi
+  echo ${ip}
+}
+
+function get_ip_prefix_from_interface {
+  local interface=$1
+  local prefix=$(ip a s ${interface} | grep 'inet ' | awk '{print $2}' | awk -F "/" '{print $2}')
+  if [ -z "${prefix}" ] ; then
+    echo "Interface ${interface} has no valid IP address."
+    exit 1
+  fi
+  echo ${prefix}
+}
+
+function bind_dpdk_nics {
+  target_driver={{ .Values.conf.ovs_dpdk.driver }}
+  {{- range .Values.conf.ovs_dpdk.nics }}
+
+    #
+    # handle NIC {{ .pci_id }}
+    #
+    {{- if .migrate_ip }}
+      name=$(get_name_by_pci_id {{ .pci_id | quote }})
+      if [ -n "${name}" ] ; then
+        ip=$(get_ip_address_from_interface ${name})
+        prefix=$(get_ip_prefix_from_interface ${name})
+
+        # Enabling explicit error handling: We must avoid to lose the IP
+        # address in the migration process. Hence, on every error, we
+        # attempt to assign the IP back to the original NIC and exit.
+        set +e
+        ip addr flush dev ${name}
+        if [ $? -ne 0 ] ; then
+          ip addr add ${ip}/${prefix} dev ${name}
+          echo "Error while flushing IP from ${name}."
+          exit 1
+        fi
+
+        bridge=$(ip a s {{ .bridge | quote }} 2> /dev/null)
+        if [ -z "${bridge}" ] ; then
+          echo "Bridge {{ .bridge }} does not exist. Creating it on demand."
+          init_ovs_dpdk_bridge {{ .bridge | quote }}
+        fi
+
+        ip addr add ${ip}/${prefix} dev {{ .bridge | quote }}
+        if [ $? -ne 0 ] ; then
+          echo "Error assigning IP to bridge {{ .bridge }}."
+          ip addr add ${ip}/${prefix} dev ${name}
+          exit 1
+        fi
+        set -e
+      fi
+    {{- end }}
+
+    current_driver="$(get_driver_by_address {{ .pci_id | quote }} )"
+    if [ "$current_driver" != "$target_driver" ]; then
+      if [ "$current_driver" != "" ]; then
+        unbind_nic {{ .pci_id | quote }} $current_driver
+      fi
+      bind_nic {{ .pci_id | quote }} $target_driver
+    fi
+
+    ovs-vsctl --db=unix:${OVS_SOCKET} --if-exists del-port {{ .name | quote }}
+
+    dpdk_options=""
+    {{- if .ofport_request }}
+      dpdk_options+='ofport_request={{ .ofport_request }} '
+    {{- end }}
+    {{- if .n_rxq }}
+      dpdk_options+='options:n_rxq={{ .n_rxq }} '
+    {{- end }}
+    {{- if .pmd_rxq_affinity }}
+      dpdk_options+='other_config:pmd-rxq-affinity={{ .pmd_rxq_affinity }} '
+    {{- end }}
+
+    ovs-vsctl --db=unix:${OVS_SOCKET} --may-exist add-port {{ .bridge | quote }} {{ .name | quote}} \
+       -- set Interface {{ .name }} type=dpdk options:dpdk-devargs={{ .pci_id | quote }} ${dpdk_options}
+  {{- end }}
+}
+
+function get_driver_by_address {
+  if [[ -e /sys/bus/pci/devices/$1/driver ]]; then
+    echo $(ls /sys/bus/pci/devices/$1/driver -al | awk '{n=split($NF,a,"/"); print a[n]}')
+  fi
+}
+
+function init_ovs_dpdk_bridge {
+  bridge=$1
+  ovs-vsctl --db=unix:${OVS_SOCKET} --may-exist add-br ${bridge} \
+  -- set Bridge ${bridge} datapath_type=netdev
+  ip link set ${bridge} up
+}
+
+# create all additional bridges defined in the DPDK section
+function init_ovs_dpdk_bridges {
+  {{- range .Values.conf.ovs_dpdk.bridges }}
+    init_ovs_dpdk_bridge {{ .name | quote }}
+  {{- end }}
+}
+
+
 # FIXME(portdirect): There is a neutron bug in Queens that needs resolved
 # for now, if we cannot even get the version of neutron-sanity-check, skip
 # this validation.
@@ -61,8 +187,13 @@ if [ -z "${tunnel_interface}" ] ; then
         | awk '{ print $1 }') || exit 1
 fi
 
+{{- if .Values.conf.ovs_dpdk.enabled }}
+init_ovs_dpdk_bridges
+bind_dpdk_nics
+{{- end }}
+
 # determine local-ip dynamically based on interface provided but only if tunnel_types is not null
-LOCAL_IP=$(ip a s $tunnel_interface | grep 'inet ' | awk '{print $2}' | awk -F "/" '{print $1}')
+LOCAL_IP=$(get_ip_address_from_interface ${tunnel_interface})
 if [ -z "${LOCAL_IP}" ] ; then
   echo "Var LOCAL_IP is empty"
   exit 1
@@ -72,3 +203,4 @@ tee > /tmp/pod-shared/ml2-local-ip.ini << EOF
 [ovs]
 local_ip = "${LOCAL_IP}"
 EOF
+

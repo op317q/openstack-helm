@@ -1,0 +1,1 @@
+../ceph/020-setup-client.sh
