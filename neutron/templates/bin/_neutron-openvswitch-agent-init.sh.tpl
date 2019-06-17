@@ -70,7 +70,7 @@ function bind_dpdk_nics {
     echo "1stmigrateIP = ${migrateIP}"
     echo "2nd.migrate_ip = ${.migrate_ip}"
     echo "3rd.migrate_ip = .migrate_ip"
-    {{ if .migrate_ip and eq .migrate_ip true}}
+    {{ if and .migrate_ip (eq .migrate_ip true)}}
       echo "entering into migrate_ip if loop
       name=$(get_name_by_pci_id {{ .pci_id | quote }})
       if [ -n "${name}" ] ; then
